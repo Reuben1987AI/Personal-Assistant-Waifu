@@ -1,2 +1,2 @@
-# Personal-assistant-Waifu
+# Personal-Assistant-Waifu
 Your very own Personal Assistant Waifu
