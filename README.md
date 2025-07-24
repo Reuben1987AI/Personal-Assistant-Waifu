@@ -20,6 +20,12 @@ Your very own Personal Assistant Waifu
   - [ ] Games repo vs using skills repo
   - [ ] Dead by AI game
 
+- [ ] Control browser
+  - [ ] Chrome extension vs
+  - [ ] Testing framework API
+
+- [ ] Control PC
+
 ## Individual Random Specific Features
 
 - [ ] Remind me of my appointments
@@ -27,11 +33,14 @@ Your very own Personal Assistant Waifu
 - [ ] Automate scripts in my computer
 - [ ] Answer my business whatsapp
 - [ ] Control Claude Code by Voice
-
+- [ ] Skill: Send CVs on Linkedin/custom
+- [ ] Skill: Auto follow / like socials github/instagram/tiktok
 
 ## References
 
 ### Personal assistants
+
+https://github.com/Jackywine/Bella
 
 https://github.com/project-alice-assistant/ProjectAlice
 https://github.com/project-alice-assistant/ProjectAliceSkills
