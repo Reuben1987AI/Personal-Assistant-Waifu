@@ -1,0 +1,9 @@
+model_name: kassandra
+target_phrases:
+  - "kassandra"
+n_samples: 10000
+tts_batch_size: 32
+model:
+  model_type: conv_attention
+  model_size: small
+  steps: 50000

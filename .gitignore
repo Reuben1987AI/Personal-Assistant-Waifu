@@ -1,0 +1,31 @@
+# Dependencies
+node_modules/
+target/
+**/*.rs.bk
+*.pdb
+
+# Tauri
+src-tauri/target/
+
+# Wake word training output
+wakeword-output/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Env
+.env
+
+# Build artifacts
+dist/
+build/
+
+# Logs
+*.log
