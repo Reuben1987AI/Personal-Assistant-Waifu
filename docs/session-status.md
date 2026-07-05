@@ -1,33 +1,20 @@
 # Session Resume: Personal Assistant Waifu (Kassandra)
 
 ## Last Updated
-2026-07-04 (chinese teacher mode shipped; manual call start; wake word still deferred)
+2026-07-04 (node_modules isolated, CJK web font, host install blocks)
 
-## Chinese Teacher Mode — DONE
-Voice-driven Chinese tutoring mode. User says "let's start chinese teacher mode" → LLM calls `enter_chinese_teacher_mode()` tool → Rust flips `AppState.teacher.active`, persists to `progress.json`, emits `app_mode`+`teacher_state` → frontend badge appears in the status bar. Exit by voice ("stop teaching") → symmetric `exit_chinese_teacher_mode()`.
+## This Session (2026-07-04 late)
 
-**Design (validated by `src-tauri/examples/probe_realtime_tools.rs`):**
-- Model: switched default to `qwen3.5-omni-plus-realtime` (`qwen/client.rs:19`). Flash has no tools; plus accepts `tools` + `input_audio_transcription.language` in `session.update`. Higher cost, accepted.
-- Anti-cheat: when teacher mode is on, paraformer is pinned to `language: "zh"` — English "hello" can't autocorrect into `你好`. Pass/fail = target Hanzi OR pinyin (tones optional); English translation is rejected. Enforced via the tutor prompt, not app-side transcript matching.
-- Phase authority: app is authoritative (`{active, phase, target_word, known_words}` in `AppState.teacher` + `progress.json`). LLM self-drives the LEARN → PRACTICE_ONE → LEARN → PRACTICE_ALL loop via `set_phase(phase, target)` and `mark_word_learned(hanzi)` tool calls — every transition observable so drift is detectable.
-- Curriculum: fixed `curriculum.json` (rich: `{hanzi, pinyin, en, category}`), shipped read-only via `include_str!`, seeded into `app_data_dir/curriculum.json` on first run. `advance()` pops the next unlearned word.
-- Persistence: two files in `app_data_dir` — `curriculum.json` (reset-able default), `progress.json` (learned set, position, phase, target — survives restarts). Loaded in `main.rs setup()`'s async runtime task.
-- Tutor prompt: bare-minimum. One word at a time, no grammar/etymology unless asked, ≤2 short sentences per turn. No preamble, no recaps.
-- Tool-call dispatch: `response.function_call_arguments.done` handler in `run_call` → `TeacherState::handle_tool_call` → persist → emit events → if mode toggled, send fresh `session.update` (swap instructions + zh) → send `conversation.item.create` (`function_call_output`) + `response.create` to resume. Outbound ws writes go through an mpsc channel + writer task (SplitSink doesn't Clone).
+### Docker isolation — DONE
+- `node_modules/` removed from host. Named Docker volume `waifu-node-modules` shadows `/app/client/node_modules` so `bun install` inside the container never touches the host FS.
+- `Makefile` `dev-run` + `dev-shell` both mount `-v waifu-node-modules:/app/client/node_modules`.
+- `tauri.conf.json` guard changed from `[ -d node_modules ]` → `[ -x node_modules/.bin/vite ]` since the volume mount creates an empty dir.
+- `vite.config.ts` CWD guard: throws if `process.cwd()` doesn't start with `/app/`, blocking `bun run dev`/`build` on host.
+- `client/scripts/preinstall.cjs`: blocks `npm`/`pnpm`/`yarn install` on host (checks `/.dockerenv`). Bun skips lifecycle scripts by default, so the vite guard + AGENTS.md rules handle bun.
+- `AGENTS.md`: Docker section with hard blocks — no `bun`/`npm`/`cargo`/`tauri` commands on host, no `node_modules/` access from host, always use `make dev-shell`.
 
-**Files:** `src-tauri/src/teacher.rs` (state + curriculum + persistence + instructions/tools builders + dispatch), `src-tauri/resources/curriculum.json` (16-word starter), `src-tauri/src/qwen/client.rs` (tools + dispatch in `run_call`), `src-tauri/src/lib.rs` (`AppState.teacher`), `src-tauri/src/main.rs` (`setup()` loads teacher from `app_data_dir`), `client/src/stores/state/domain/teacher.ts` (+ `index.ts`), `client/src/stores/workflows/teacherWorkflow.ts`, `client/src/stores/stores.ts`, `client/src/main.tsx` (`app_mode` + `teacher_state` listeners, fail-fast at adapter), `client/src/components/StatusBar.tsx` (mode badge), `client/src/styles.css` (#teacher-badge).
-
-## What's Working
-- App launches, renders UI (status bar, chat, wake-activity circle at top of chat, Mute / End Call buttons). React + MobX frontend.
-- Tauri commands fire (`start_call`, `end_call`, `toggle_mute`, `console_log`)
-- WebSocket connects to Qwen Omni Realtime (intl/sg/cn; sg is what `.env` uses)
-- Mic capture: cpal 16kHz mono, 100ms (1600-sample) chunks, `std::mem::forget(stream)` keeps stream for process lifetime
-- Speaker playback: cpal 24kHz output, `response.audio.delta` → base64 → VecDeque → speaker
-- Audio routing: container ALSA `default` → host PipeWire (`/tmp/pipewire-0`)
-- Frontend transcript + state updates via Tauri events (`app_mode`, `teacher_state` added this session)
-- Full audio loop both ways verified (speak → Qwen responds → speakers)
-- WebRTC AEC3 echo cancellation (`src-tauri/src/audio/aec.rs`) — hoisted to app startup, shared between wake loop and Qwen call. Full-duplex, barge-in works.
-- Chinese teacher mode — tools + persistence + phase machine + UI badge (committed but not yet live-mic-tested end-to-end)
+### CJK font — DONE
+- App now bundles `@fontsource/noto-sans-sc` web font (Chinese-simplified + Latin subsets, 1.1MB woff2). Imported in `client/src/main.tsx`, set as primary `font-family` in `styles.css`. Docker container has zero system CJK fonts — this is the sole source of CJK glyphs.
 
 ## What's Working
 - App launches, renders UI (status bar, chat, wake-activity circle at top of chat, Mute / End Call buttons)
@@ -96,28 +83,28 @@ Replaced automatic wake-word triggering with a UI Call button that starts a Qwen
 
 ## Key Files
 - `src-tauri/src/main.rs` — Tauri entry, commands (`start_call`, `end_call`, `toggle_mute`, `console_log`), `run_voice_agent` loop (wake detection gated behind `KASSANDRA_WAKE_ENABLED`, default false — see wake-word.md), `WakeConfig::from_env()`, `env_bool()`, `wake_state`/`wake_rms` emitters, optional `KASSANDRA_DUMP_PCM` writer.
-- `src-tauri/src/lib.rs` — `AppState` (muted / in_call / wakeword_active AtomicBools, `teacher: TeacherState`).
-- `src-tauri/src/teacher.rs` — TeacherState: curriculum + progress persistence, phase machine, bare-minimum tutor prompt builder, tools builder, tool-call dispatch + snapshot for frontend. See "Chinese Teacher Mode" above.
-- `src-tauri/resources/curriculum.json` — 16-word starter curriculum (`{hanzi, pinyin, en, category}`), embedded via `include_str!`.
+- `src-tauri/src/lib.rs` — `AppState` (muted / in_call / wakeword_active AtomicBools).
 - `src-tauri/src/audio/mic.rs` — cpal mic capture, 100ms chunks, `std::mem::forget`.
 - `src-tauri/src/audio/speaker.rs` — cpal output, 24kHz, VecDeque, `std::mem::forget`.
 - `src-tauri/src/audio/aec.rs` — WebRTC AEC3 echo cancellation (bundled C++). Hoisted to `run_voice_agent` startup. `clear_render()` for post-call cleanup. PipeWire `module-echo-cancel` alt documented in module docs.
 - `src-tauri/src/audio/mod.rs` — exports `Aec`, `MicStream`, `Speaker`.
 - `src-tauri/src/wakeword/detector.rs` — livekit-wakeword init (loads `models/kassandra.onnx`).
 - `src-tauri/examples/test_wakeword.rs` — wake-model diagnostic binary (slide/live/isolated modes).
-- `src-tauri/examples/probe_realtime_tools.rs` — one-shot probe: confirms plus-realtime accepts `tools` + `input_audio_transcription.language` in `session.update`. Run with `cargo run --example probe_realtime_tools`.
-- `src-tauri/src/qwen/client.rs` — Qwen WebSocket proxy. `run_call` (mic + aec + wake_chunk; used by both wake-fired and manual `start_call`; now wires teacher tools + tool-call dispatch + session.update swap on mode flip) and `run_call_manual` (dormant). Outbound ws writes via mpsc channel + writer task. Handles `user_transcript` / `qwen_transcript` / `qwen_response` / `app_mode` / `teacher_state`.
-- `client/src/main.tsx` — Frontend event adapter. Single place `listen()` is called. Routes `wake_state`/`wake_rms`/`wake_vad`/`qwen_state`/`*_transcript`/`qwen_response`/`qwen_error`/`app_mode`/`teacher_state` to workflows, fail-fast at the boundary.
-- `client/src/components/StatusBar.tsx` — status bar + teacher mode badge (phase + target + position/total).
-- `client/src/stores/state/domain/teacher.ts` — TeacherState domain store (phase-validated at boundary).
-- `client/src/stores/workflows/teacherWorkflow.ts` — applySnapshot / setModeActive.
+- `src-tauri/src/qwen/client.rs` — Qwen WebSocket proxy. `run_call` (mic + aec + wake_chunk; used by both wake-fired and manual `start_call`) and `run_call_manual` (dormant — manual call start reuses `run_call` instead; left for future use). Handles `user_transcript` / `qwen_transcript` / `qwen_response`. `run_call` calls `aec.clear_render()` after the call.
+- `src/main.js` — Frontend UI, Tauri event listeners (`wake_state`, `wake_rms`, `qwen_state`, `*_transcript`, `qwen_response`, `qwen_error`), wake-circle state machine.
+- `src/index.html`, `src/styles.css` — UI (status bar, `#wake-hero` + `#messages` inside `#chat`, Mute/End Call).
 - `src-tauri/tauri.conf.json` — `withGlobalTauri: true`, `transparent: false`, `decorations: true`, `resizable: true`, 520×800.
 - `src-tauri/capabilities/default.json` — `core:default`.
 - `wakeword-configs/kassandra.yaml` — wake-word training config.
 - `docker/Dockerfile.dev` — Rust stable, Bun, @tauri-apps/cli, cargo-watch, audio deps, AEC build deps.
 - `docker/asound.conf` — ALSA → PipeWire routing.
 - `docker/wakeword-trainer/Dockerfile` — livekit-wakeword Python trainer + espeak-ng.
-- `Makefile` — dev-build, dev-run (auto-runs `xhost +local:docker`), dev-shell, train-wakeword.
+- `Makefile` — dev-build, dev-run (auto-runs `xhost +local:docker`), dev-shell, train-wakeword; waifu-node-modules volume isolation.
+- `AGENTS.md` — Frontend architecture rules + Docker isolation hard blocks.
+- `client/vite.config.ts` — Vite config + Docker CWD guard (hard-blocks host dev/build).
+- `client/scripts/preinstall.cjs` — Docker guard for npm/pnpm/yarn install (host block).
+- `client/src/main.tsx` — React mount, Tauri event adapter, CJK web font import.
+- `client/src/styles.css` — Global styles, font-family stack with bundled Noto Sans SC.
 
 ## Environment Variables
 ```
