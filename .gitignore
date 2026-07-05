@@ -20,8 +20,9 @@ wakeword-output/
 .DS_Store
 Thumbs.db
 
-# Env
-.env
+# Env — any file starting with `.env` except the committed example
+.env*
+!.env.example
 
 # Build artifacts
 dist/
