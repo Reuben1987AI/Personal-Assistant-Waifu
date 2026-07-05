@@ -7,12 +7,12 @@
     "devUrl": "http://localhost:5173",
     "beforeDevCommand": {
       "cwd": "../client",
-      "script": "[ -d node_modules ] || bun install; bun run dev",
+      "script": "[ -x node_modules/.bin/vite ] || bun install; bun run dev",
       "wait": false
     },
     "beforeBuildCommand": {
       "cwd": "../client",
-      "script": "[ -d node_modules ] || bun install; bun run build",
+      "script": "[ -x node_modules/.bin/vite ] || bun install; bun run build",
       "wait": true
     }
   },

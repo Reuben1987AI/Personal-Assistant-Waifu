@@ -4,6 +4,7 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
+    "preinstall": "node scripts/preinstall.cjs",
     "dev": "vite",
     "build": "tsc -b && vite build",
     "preview": "vite preview",
@@ -11,6 +12,7 @@
     "lint": "eslint ."
   },
   "dependencies": {
+    "@fontsource/noto-sans-sc": "^5.2.9",
     "@tauri-apps/api": "^2.1.1",
     "mobx": "^6.13.5",
     "mobx-react-lite": "^4.1.0",

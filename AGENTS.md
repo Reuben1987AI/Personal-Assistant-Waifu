@@ -4,6 +4,71 @@ Rules are ported from the Flutter/MobX naturaleza-mexicana app and adapted to a 
 
 Don't document what exists - document where to find it and how to work with it.
 
+## Docker — CRITICAL
+
+**The entire project runs inside Docker. The host machine must remain isolated from all package managers and node_modules.**
+
+### Hard blocks (NEVER do these on the host)
+
+- **NEVER run `bun install`**, `npm install`, `pnpm install`, `yarn install`, or any package manager install command on the host.
+- **NEVER run `bun add`**, `npm add`, or any package-adding command on the host.
+- **NEVER run `bun run dev`**, `bun run build`, `bun run lint`, `bun run typecheck`, or any script from `package.json` on the host.
+- **NEVER run `cargo build`**, `cargo check`, `cargo run`, or any Rust build command on the host.
+- **NEVER invoke `tauri`**, `bunx tauri`, `cargo tauri`, or any Tauri CLI command on the host.
+- **NEVER create, read, or reference `node_modules/` from the host.** If you need to inspect a dependency, use `make dev-shell` and read it inside the container.
+
+### How to work
+
+The Docker image installs all system deps (webkit2gtk, gtk3, alsa, gstreamer, etc.), Rust toolchain, Bun, and Tauri CLI. The project directory is mounted at `/app` inside the container.
+
+`node_modules/` is isolated from the host via a named Docker volume (`waifu-node-modules`). The volume shadows `/app/client/node_modules` inside the container, so `bun install` writes to the Docker volume, not the host filesystem. If `node_modules/` ever appears on the host, delete it immediately — it means the volume mount is broken or was bypassed.
+
+```bash
+# Build the Docker image (do this first, and again after Dockerfile.dev changes)
+make dev-build
+
+# Run the full Tauri app (Vite + Rust backend + webview)
+make dev-run
+
+# Open an interactive shell inside the container (for installing deps, running
+# lint/typecheck, inspecting files, etc.)
+make dev-shell
+```
+
+### If node_modules appears on the host
+
+This should never happen with the volume mount in place. If it does:
+
+```bash
+# Delete root-owned files via Docker (not sudo on the host):
+docker run --rm -v $(pwd):/app:rw -w /app alpine:latest sh -c "rm -rf /app/client/node_modules"
+```
+
+### Installing packages / adding dependencies
+
+Always do this inside the container:
+
+```bash
+make dev-shell
+# then inside the container:
+cd /app/client && bun add <package>
+# or for Rust crates:
+cd /app/src-tauri && cargo add <crate>
+```
+
+### Running lint, typecheck, tests
+
+```bash
+make dev-shell
+# then inside the container:
+cd /app/client && bun run typecheck
+cd /app/client && bun run lint
+```
+
+### CJK fonts
+
+The app bundles Noto Sans SC as a web font via `@fontsource/noto-sans-sc` (imported in `client/src/main.tsx`). The Docker container has no CJK system fonts — the web font is the sole source of CJK glyphs. When adding new font weights or subsets, do it inside the container via `make dev-shell`.
+
 ## Architecture Rules
 
 ```

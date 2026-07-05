@@ -1,6 +1,16 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 
+// Hard block: vite must only run inside the Docker container. If someone
+// runs `bun run dev` or `bun run build` on the host, fail immediately.
+if (!process.cwd().startsWith("/app/")) {
+  throw new Error(
+    "HOST BLOCK: vite must run inside the Docker container. Use `make dev-shell` " +
+    "or `make dev-run` to work inside the container. Never run bun/npm/cargo on " +
+    "the host — see AGENTS.md for details."
+  );
+}
+
 // Tauri dev server: listen on all interfaces so the Tauri webview can reach
 // it from inside the Docker container.
 export default defineConfig({

@@ -20,6 +20,7 @@ dev-run:
 		-v /run/user/$$(id -u)/pipewire-0:/tmp/pipewire-0:ro \
 		-v waifu-cargo-registry:/usr/local/cargo/registry \
 		-v waifu-cargo-git:/usr/local/cargo/git \
+		-v waifu-node-modules:/app/client/node_modules \
 		-w /app \
 		--device /dev/dri:/dev/dri \
 		--device /dev/snd \
@@ -33,6 +34,7 @@ dev-shell:
 		-v $$(pwd):/app:rw \
 		-v waifu-cargo-registry:/usr/local/cargo/registry \
 		-v waifu-cargo-git:/usr/local/cargo/git \
+		-v waifu-node-modules:/app/client/node_modules \
 		-w /app \
 		$(IMAGE_NAME) /bin/bash
 

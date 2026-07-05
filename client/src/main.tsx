@@ -5,6 +5,8 @@ import { App } from "./App";
 import { state, workflows } from "./stores/stores";
 import type { WakeStatePayload } from "./stores/state/domain/wake";
 import type { TeacherSnapshotPayload } from "./stores/state/domain/teacher";
+import "@fontsource/noto-sans-sc/chinese-simplified-400.css";
+import "@fontsource/noto-sans-sc/latin-400.css";
 import "./styles.css";
 
 // The single place `listen()` is called. Components/workflows never register
