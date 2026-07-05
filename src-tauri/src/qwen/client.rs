@@ -122,6 +122,9 @@ pub async fn run_call(
     let (out_tx, mut out_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
     let writer = tokio::spawn(async move {
         while let Some(text) = out_rx.recv().await {
+            if text == "__CLOSE__" {
+                break;
+            }
             if write.send(Message::Text(text.into())).await.is_err() {
                 eprintln!("ws write failed (channel)");
                 break;
@@ -357,10 +360,14 @@ pub async fn run_call(
         }
     }
 
-    // Drop the mic-feeder's sender so the writer task's channel drains and
-    // ends; `out_tx_reader` (in the reader task) will also drop on task exit.
+    // Send a close sentinel so the writer sends a WebSocket close frame,
+    // then drop the mic sender and abort the reader task. Aborting the reader
+    // drops out_tx_reader, unblocking the writer's recv() so it can close
+    // cleanly. This returns in milliseconds instead of stalling the wake loop
+    // on a potentially-idle WebSocket connection.
+    let _ = out_tx.send("__CLOSE__".to_string());
     drop(out_tx);
-    let _ = reader.await;
+    reader.abort();
     let _ = writer.await;
 
     // Drain stale render so the wake loop's post-call process_capture doesn't

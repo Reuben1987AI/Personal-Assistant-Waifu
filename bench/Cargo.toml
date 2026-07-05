@@ -1,0 +1,15 @@
+[package]
+name = "wakeword-bench"
+version = "0.1.0"
+edition = "2021"
+build = "build.rs"
+
+[[bin]]
+name = "wakeword-bench"
+path = "src/main.rs"
+
+[dependencies]
+wakeword-native = { path = "../src-tauri/lib/wakeword-native" }
+
+[build-dependencies]
+cc = "1"

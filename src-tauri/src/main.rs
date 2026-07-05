@@ -3,7 +3,7 @@
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, oneshot};
 
 use tauri::{Emitter, Manager};
 use serde_json::json;
@@ -18,22 +18,10 @@ use kassandra::AppState;
 /// without a rebuild — same style as the Qwen model/voice/region config in
 /// `client.rs`. See `docs/.session-status.md` for tuning guidance.
 struct WakeConfig {
-    /// RMS floor (i16, 0..32767) below which a 100ms chunk is treated as
-    /// silence. The AEC noise-suppressor runs first, so this measures the
-    /// *denoised* energy. Default 250 — quiet enough to catch a clear spoken
-    /// word, high enough to ignore breath / HVAC / tape hiss.
-    rms_threshold: f32,
-    /// While active, run `kassandra.onnx` on the rolling buffer at most once
-    /// per this interval. Lower ⇒ more responsive but more CPU. Default 200ms.
-    predict_cadence: Duration,
     /// Score above which we fire. livekit-wakeword's silence floor is ~0.003;
     /// false-noise sits at ~0.005-0.30; a clear wake word is 0.5-0.9. Default
     /// 0.45 sits in the gap. Lower to 0.35 if misses; raise if false fires.
     wake_threshold: f32,
-    /// Active → inactive requires this many consecutive sub-threshold 100ms
-    /// chunks. 8 = 800ms of quiet confirms an utterance ended (so we can emit
-    /// a `rejected` score for UX feedback). Default 8.
-    silence_confirm_chunks: u32,
     /// After a successful fire, ignore further wake events for this long so
     /// the same word still sitting in the rolling buffer can't double-fire.
     /// The actual Qwen call typically blocks the wake loop far longer than
@@ -44,7 +32,7 @@ struct WakeConfig {
     /// `predict()` needs ~2s of audio — shorter windows silently return 0.0.
     /// 32000 samples = 2.0s. The word naturally slides through every position
     /// in this window, so the undertrained/position-sensitive classifier gets
-    /// a fair shot at its scoring position every cadence tick. Default 32000.
+    /// a fair shot at its scoring position every predict. Default 32000.
     wake_buffer_samples: usize,
 }
 
@@ -60,13 +48,7 @@ impl WakeConfig {
                 .unwrap_or(default)
         }
         Self {
-            rms_threshold: env_or("KASSANDRA_RMS_THRESHOLD", 250.0),
-            predict_cadence: Duration::from_millis(env_or(
-                "KASSANDRA_PREDICT_CADENCE_MS",
-                200u64,
-            )),
             wake_threshold: env_or("KASSANDRA_WAKE_THRESHOLD", 0.45),
-            silence_confirm_chunks: env_or("KASSANDRA_SILENCE_CONFIRM_CHUNKS", 8u32),
             post_fire_lockout: Duration::from_millis(env_or(
                 "KASSANDRA_POST_FIRE_LOCKOUT_MS",
                 2000u64,
@@ -142,12 +124,16 @@ async fn console_log(message: String) -> Result<(), String> {
 
 #[tauri::command]
 async fn end_call(
+    app: tauri::AppHandle,
     state: tauri::State<'_, Arc<Mutex<AppState>>>,
     speaker: tauri::State<'_, Speaker>,
 ) -> Result<(), String> {
     let s = state.lock().await;
     s.in_call.store(false, Ordering::SeqCst);
     drop(s);
+    // Emit immediately so the frontend updates before run_call's WebSocket
+    // cleanup finishes (reader/writer task teardown can take seconds).
+    let _ = app.emit("qwen_state", "disconnected");
     speaker.clear().await;
     Ok(())
 }
@@ -206,20 +192,20 @@ async fn run_voice_agent(
         }
     };
 
-    // Wake-word detection is gated behind KASSANDRA_WAKE_ENABLED (default
-    // false). The rolling-buffer wake loop stays in the code (compiles, useful
-    // for future wake work — see docs/wake-word.md) but is skipped at runtime
-    // in manual mode so it isn't burning a core or emitting wake events. Calls
-    // are started manually via the `start_call` Tauri command, which flips
-    // `in_call` and lets the loop's top-of-loop check run `qwen::run_call` with
-    // the working mic + AEC wiring and an empty wake chunk.
-    let wake_enabled = env_bool("KASSANDRA_WAKE_ENABLED", false);
+    // Wake-word detection is enabled by default (KASSANDRA_WAKE_ENABLED=true).
+    // Continuous rolling-buffer predict — see docs/wake-word.md for the full
+    // architecture. The native ONNX Runtime fork achieves ~17 ms/predict, so
+    // we predict every 100ms mic chunk on a tokio worker thread without
+    // blocking the mic read loop. Calls can also be started manually via the
+    // `start_call` Tauri command (the Call button), which flips `in_call` and
+    // lets the top-of-loop check run `qwen::run_call` with an empty wake chunk.
+    let wake_enabled = env_bool("KASSANDRA_WAKE_ENABLED", true);
 
-    let mut detector = if wake_enabled {
+    let detector: Option<Arc<std::sync::Mutex<livekit_wakeword::WakeWordModel>>> = if wake_enabled {
         match wakeword::init_detector() {
             Ok(d) => {
                 eprintln!("Wakeword detector loaded successfully");
-                Some(d)
+                Some(Arc::new(std::sync::Mutex::new(d)))
             }
             Err(e) => {
                 eprintln!("Wakeword detector not available: {e}");
@@ -244,55 +230,33 @@ async fn run_voice_agent(
     let mic_stream = audio::open_mic()?;
     let mic_stream = Arc::new(Mutex::new(mic_stream));
 
-    // Wake-word detection — livekit-wakeword's intended architecture: an
-    // **energy-gated rolling 2s buffer with continuous predict at a
-    // configurable cadence**. No VAD, no utterance framing, no lead-silence
-    // crutch.
-    //
-    // Background: livekit-wakeword 0.1's `predict()` needs a 2s window and is
-    // position-sensitive — the kassandra.onnx classifier was trained on TTS
-    // positives that have ~800ms of leading silence before the word. Earlier
-    // attempts worked around this by detecting utterance boundaries and pre-
-    // pending lead silence ("framing crutch"). The rolling buffer makes all of
-    // that irrelevant: as the user speaks, every new 100ms chunk pushes the
-    // window forward, so the word naturally slides through every position
-    // inside the 2s window. At some cadence tick it lands on the classifier's
-    // scoring position and fires.
+    // Wake-word detection — livekit-wakeword's intended architecture: a
+    // **rolling 2s buffer with continuous predict**. No energy gate, no VAD,
+    // no utterance framing, no lead-silence crutch. With the native ONNX
+    // Runtime fork at ~17 ms/predict, we predict once per 100ms mic chunk
+    // (dispatched on a tokio worker thread) so the mic read loop never stalls.
     //
     // The mel+embedding classifier pipeline is itself the "is this speech"
-    // filter — non-speech audio scores low (~0.005). The energy gate is just
-    // a cheap outer "is there any sound at all?" filter that keeps us from
-    // burning CPU on the ONNX when the room is silent. The AEC noise
-    // suppressor (path A0) runs *before* the RMS computation, so the gate
-    // measures denoised energy — steady background no longer cycles predicts.
+    // filter — non-speech audio scores ~0.005. No external gate needed.
     //
     // Pipeline (per 100ms chunk):
-    //   1. AEC denoise (NS + HPF; AEC3 is idle until a Qwen call pushes
-    //      render) → denoised chunk.
+    //   1. AEC denoise (NS + HPF; AEC3 idle until Qwen call pushes render).
     //   2. Append to the rolling buffer; drain oldest past WAKE_BUFFER_SAMPLES.
-    //   3. RMS gate: chunk_rms >= rms_threshold ⇒ "active" (emit `hearing`).
-    //   4. While active && not in post-fire lockout && predict cadence elapsed:
-    //        detector.predict(&rolling_buffer); if score > wake_threshold ⇒ fire.
-    //      Else (sub-threshold) accumulate silence_run; after
-    //      silence_confirm_chunks go inactive and emit `rejected` (or
-    //      `listening` if we fired during this active period).
+    //   3. Emit wake_rms (denoised energy, 0..1) every chunk for reactive bars.
+    //   4. If no predict in flight and outside the post-fire lockout: clone the
+    //      rolling buffer, spawn predict() on a tokio worker, collect score via
+    //      oneshot. On fire: emit fired + start the Qwen call.
     //
     // wake_state / wake_rms events drive the frontend circle:
-    //   listening  — idle, bars breathe via CSS (no wake_rms emitted)
-    //   hearing    — RMS above gate, bars react to wake_rms
+    //   listening  — idle, bars react to wake_rms continuously
     //   fired      — score > threshold + Qwen call starting (payload: {score})
-    //   rejected   — went inactive without firing (payload: {score})
     //   error      — mic / predict failure (payload: {msg})
 
     let mut rolling: Vec<i16> = Vec::with_capacity(cfg.wake_buffer_samples + WakeConfig::CHUNK_SAMPLES);
-    let mut active = false;
-    let mut silence_run: u32 = 0;
-    let mut predict_count: u32 = 0;
-    let mut last_predict: Instant = Instant::now();
-    let mut last_score: f32 = 0.0;
-    let mut lockout_until: Instant = Instant::now(); // far past → unlocked at start
-    let mut fired_this_utterance = false;
+    let mut lockout_until: Instant = Instant::now();
     let mut pending_wake_chunk: Option<Vec<i16>> = None;
+    let mut predict_result: Option<oneshot::Receiver<f32>> = None;
+    let mut predict_count: u32 = 0;
 
     // Optional diagnostic: append every denoised wake-loop chunk (the exact
     // bytes the rolling buffer / classifier sees) to a raw s16le mono 16kHz
@@ -316,8 +280,8 @@ async fn run_voice_agent(
 
     loop {
         if state.lock().await.in_call.load(Ordering::SeqCst) {
-            // Fire delivered us here; run the Qwen call, then reset the wake
-            // state machine so the next session starts clean.
+            // Fire delivered us here; run the Qwen call, then reset for a
+            // fresh wake cycle.
             let wake_chunk = pending_wake_chunk
                 .take()
                 .unwrap_or_else(|| vec![0; 2 * WakeConfig::CHUNK_SAMPLES]);
@@ -331,12 +295,10 @@ async fn run_voice_agent(
             }
             state.lock().await.in_call.store(false, Ordering::SeqCst);
             let _ = app.emit("qwen_state", "idle");
-            // Drop any captured audio and re-arm a fresh wake cycle.
+            // Drop captured audio + in-flight predict, re-arm a fresh cycle.
+            predict_result = None;
             rolling.clear();
-            active = false;
-            silence_run = 0;
-            fired_this_utterance = false;
-            last_predict = Instant::now();
+            lockout_until = Instant::now();
             let _ = app.emit("wake_state", json!({"state": "listening"}));
             continue;
         }
@@ -355,11 +317,6 @@ async fn run_voice_agent(
             continue;
         }
 
-        // Apply the shared AEC stack (NS + HPF; AEC3 is idle until a Qwen call
-        // pushes render) BEFORE the RMS gate. NS strips steady background so
-        // the energy gate measures denoised loudness. Echo cancellation
-        // against stale render would only matter during a call, and the wake
-        // loop doesn't run then.
         let chunk: Vec<i16> = match &aec {
             Some(a) => a.lock().unwrap().process_capture(&chunk),
             None => chunk,
@@ -384,68 +341,65 @@ async fn run_voice_agent(
             rolling.drain(..surplus);
         }
 
+        // Emit wake_rms every chunk so the frontend bars react continuously.
+        let _ = app.emit("wake_rms", rms_norm);
+
+        // Check if the previous predict completed.
+        let fired_score: Option<f32> = if let Some(mut rx) = predict_result.take() {
+            match rx.try_recv() {
+                Ok(score) => {
+                    eprintln!(
+                        "wake predict #{}: score={:.4} (rolling {}/{} samples)",
+                        predict_count,
+                        score,
+                        rolling.len(),
+                        cfg.wake_buffer_samples
+                    );
+                    (score > cfg.wake_threshold).then_some(score)
+                }
+                Err(oneshot::error::TryRecvError::Empty) => {
+                    predict_result = Some(rx); // still running, put back
+                    None
+                }
+                Err(oneshot::error::TryRecvError::Closed) => None,
+            }
+        } else {
+            None
+        };
+
+        if let Some(score) = fired_score {
+            eprintln!("wake detected (score {score:.3})");
+            let _ = app.emit("wake_state", json!({"state": "fired", "score": score}));
+            let _ = app.emit("qwen_state", "wake_detected");
+            let _ = app.emit("qwen_state", "connecting");
+
+            // Hand the audio that fired to Qwen as its first input
+            // chunk, then clear the window so post-call residual can't
+            // re-fire the same word.
+            pending_wake_chunk = Some(rolling.clone());
+            rolling.clear();
+            lockout_until = Instant::now() + cfg.post_fire_lockout;
+            state.lock().await.in_call.store(true, Ordering::SeqCst);
+            continue;
+        }
+
+        // Start a new predict if no inflight, outside lockout, and buffer full.
         let now = Instant::now();
-
-        if chunk_rms >= cfg.rms_threshold {
-            if !active {
-                active = true;
-                fired_this_utterance = false;
-                let _ = app.emit("wake_state", json!({"state": "hearing"}));
-            }
-            silence_run = 0;
-        } else if active {
-            silence_run += 1;
-            if silence_run >= cfg.silence_confirm_chunks {
-                active = false;
-                if fired_this_utterance {
-                    let _ = app.emit("wake_state", json!({"state": "listening"}));
-                } else {
-                    let _ =
-                        app.emit("wake_state", json!({"state": "rejected", "score": last_score}));
-                }
-            }
-        }
-
-        // Bars react while we believe there's audio (active + the
-        // silence-confirm tail). Once fully idle the frontend fades to the
-        // CSS-driven listening animation; we stop emitting so it can.
-        if active {
-            let _ = app.emit("wake_rms", rms_norm);
-        }
-
-        // Rolling predict — only while active and outside the post-fire lockout.
-        if active && now >= lockout_until && now.duration_since(last_predict) >= cfg.predict_cadence {
-            last_predict = now;
-            if rolling.len() >= cfg.wake_buffer_samples {
-                let scores = detector
-                    .as_mut()
-                    .expect("wake detector present when wake_enabled")
-                    .predict(&rolling)?;
+        if predict_result.is_none() && now >= lockout_until && rolling.len() >= cfg.wake_buffer_samples {
+            if let Some(ref det) = detector {
+                let (tx, rx) = oneshot::channel();
+                predict_result = Some(rx);
+                let buffer = rolling.clone();
+                let det = det.clone();
                 predict_count += 1;
-                last_score = scores.get("kassandra").copied().unwrap_or(-1.0);
-                eprintln!(
-                    "wake predict #{predict_count}: score={last_score:.4} (rolling {}/{} samples)",
-                    rolling.len(),
-                    cfg.wake_buffer_samples
-                );
-
-                if last_score > cfg.wake_threshold {
-                    eprintln!("wake detected (score {last_score:.3})");
-                    let _ = app.emit("wake_state", json!({"state": "fired", "score": last_score}));
-                    let _ = app.emit("qwen_state", "wake_detected");
-                    let _ = app.emit("qwen_state", "connecting");
-
-                    // Hand the audio that fired to Qwen as its first input
-                    // chunk, then clear the window so post-call residual can't
-                    // re-fire the same word.
-                    pending_wake_chunk = Some(rolling.clone());
-                    rolling.clear();
-                    active = false;
-                    silence_run = 0;
-                    fired_this_utterance = true;
-                    lockout_until = now + cfg.post_fire_lockout;
-                    state.lock().await.in_call.store(true, Ordering::SeqCst);
-                }
+                tokio::spawn(async move {
+                    let score = det.lock().unwrap()
+                        .predict(&buffer)
+                        .ok()
+                        .and_then(|scores| scores.get("kassandra").copied())
+                        .unwrap_or(-1.0);
+                    let _ = tx.send(score);
+                });
             }
         }
     }

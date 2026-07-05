@@ -58,6 +58,14 @@ train-wakeword:
 	@echo "Trained model: wakeword-output/$(WORD)/$(WORD).onnx"
 	@echo "Copy to: src-tauri/models/$(WORD).onnx"
 
+# -- Wake Word Benchmark (native onnxruntime) --
+
+BENCH_IMAGE := waifu-bench
+
+bench-wakeword:
+	docker build -t $(BENCH_IMAGE) -f docker/Dockerfile.bench .
+	docker run --rm $(BENCH_IMAGE)
+
 # -- Cleanup --
 
 clean:

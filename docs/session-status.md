@@ -1,9 +1,9 @@
 # Session Resume: Personal Assistant Waifu (Kassandra)
 
 ## Last Updated
-2026-07-04 (node_modules isolated, CJK web font, host install blocks)
+2026-07-05 (wake word enabled, native ONNX Runtime integrated, continuous rolling predict)
 
-## This Session (2026-07-04 late)
+## This Session (2026-07-05)
 
 ### Docker isolation — DONE
 - `node_modules/` removed from host. Named Docker volume `waifu-node-modules` shadows `/app/client/node_modules` so `bun install` inside the container never touches the host FS.
@@ -27,8 +27,36 @@
 - Full audio loop both ways verified (speak → Qwen responds → speakers)
 - WebRTC AEC3 echo cancellation (`src-tauri/src/audio/aec.rs`) — hoisted to app startup, shared between wake loop and Qwen call. Full-duplex, barge-in works. AEC NS confirmed not to hurt the wake model (live mic peaks higher than clean sample).
 
-## Wake word — DEFERRED
-The rolling-buffer wake loop (`src-tauri/src/main.rs`) compiles and fires on a real spoken "Kassandra" (score 0.53), but live latency is ~16s with one core pinned — unusable as a real-time trigger. Root cause: livekit-wakeword forces the `ort-tract` backend (~1.6s/predict) while the model's scoring window is only ~0.5s, so continuous rolling predict can't reliably catch the word. **Full history, diagnostics, and the path back to automatic wake are in [`docs/wake-word.md`](wake-word.md).** Until the inference-speed problem is solved (replace tract with real onnxruntime, or retrain for a wider scoring window), we **shipped a manual call start** (UI Call button → Qwen call, no wake word). See "Manual call start — DONE" below.
+## Wake word — ENABLED (native ONNX Runtime, ~17 ms/predict)
+
+The rolling-buffer continuous-predict design is now fully implemented and enabled by default. The native ONNX Runtime fork of livekit-wakeword (`src-tauri/lib/wakeword-native/`) achieves **~17 ms/predict** — a **94× speedup** over ort-tract (~1,600 ms). This makes the rolling-buffer design viable: each 100ms mic chunk spawns a tokio worker thread for predict(), so the mic read loop never stalls. When the score exceeds the threshold, the wake loop fires and starts a Qwen call.
+
+**Architecture:**
+- No energy gate (RMS energy gate removed — model's own non-speech baseline ~0.003 is sufficient)
+- No utterance framing, no VAD, no lead-silence crutch
+- Predict dispatched on `tokio::spawn`, result collected via `oneshot::channel`
+- RMS computed and emitted every 100ms for continuous UI bar animation
+- Wake-state events: only `listening` and `fired` (no more `hearing`/`rejected`)
+
+**Build integration:**
+- `src-tauri/onnx_compat.c` — C23 glibc compat shim for static ONNX Runtime linking on Debian Bookworm (copied from `bench/`)
+- `src-tauri/build.rs` — compiles onnx_compat.c via `cc` crate
+- `src-tauri/Cargo.toml` — `cc = "1"` build-dependency added
+
+**WakeConfig** (in `src-tauri/src/main.rs`):
+| Field | Env var | Default |
+|---|---|---|
+| `wake_threshold` | `KASSANDRA_WAKE_THRESHOLD` | `0.45` |
+| `post_fire_lockout` | `KASSANDRA_POST_FIRE_LOCKOUT_MS` | `2000ms` |
+| `wake_buffer_samples` | `KASSANDRA_WAKE_BUFFER_SAMPLES` | `32000` (2s @ 16kHz) |
+
+Removed: `rms_threshold`, `predict_cadence`, `silence_confirm_chunks` — no longer needed without energy gate / utterance framing.
+
+**End-call flow fix:**
+- `end_call` now takes `app: tauri::AppHandle` and emits `qwen_state: "disconnected"` immediately — the frontend updates to show the wake hero before `run_call` cleans up the WebSocket.
+- `run_call` cleanup sends a `__CLOSE__` sentinel through the writer channel, aborts the reader task (drops `out_tx_reader`, unblocking the writer), then awaits the writer to close the WebSocket cleanly. Returns in milliseconds instead of blocking the wake loop.
+
+Full history, diagnostics, and training guidance in [`docs/wake-word.md`](wake-word.md).
 
 ## UI (done)
 - `status bar / scrollable chat / controls` layout, 520×800 decorated resizable window, solid `#1a1a2e` bg, no transparency/blur/border-radius.
@@ -40,18 +68,16 @@ The rolling-buffer wake loop (`src-tauri/src/main.rs`) compiles and fires on a r
 ## AEC status (done, live-verified)
 WebRTC AEC3 in `src-tauri/src/audio/aec.rs`. Hoisted to `run_voice_agent` startup, shared between wake loop pre-filter and Qwen call echo cancellation. While idle, no render is pushed — only NS + HPF active, acting as the wake pre-filter (path A0). Live test this session: AEC-processed mic is fully recognizable by the wake model (live peak 0.53 vs clean sample 0.38) — NS does not hurt. If echo persists during calls: tune `stream_delay_ms`, enable AGC, or fall back to Path 2 (PipeWire `module-echo-cancel`).
 
-## Manual call start — DONE
-Replaced automatic wake-word triggering with a UI Call button that starts a Qwen call directly. The wake loop stays in the code (compiles, useful for future wake work — see [`wake-word.md`](wake-word.md)) but is gated off at runtime by `KASSANDRA_WAKE_ENABLED` (default `false`), so it isn't burning a core or emitting wake events.
+## Manual call start — COEXISTS with wake word
 
-**Chosen approach — Option 1 (reuse `run_call`):** added a `start_call` Tauri command in `src-tauri/src/main.rs` that flips `in_call=true` and emits `qwen_state: connecting`. The voice-agent loop's existing top-of-loop `in_call` check then runs `qwen::run_call` with the working mic + AEC wiring and an empty wake chunk. This reuses the verified mic-send path. `run_call_manual` (Option 2) was **not** used — it's a half-finished stub with no mic/AEC wiring, a duplicated `session.update`, and an idle loop that just sleeps; wiring it up would duplicate `run_call`'s mic-send loop. It's left in `client.rs` as dormant code.
+The Call button still works alongside automatic wake-word detection. Both paths share the same `in_call` → `run_call` flow in the voice-agent loop. Wake-word detection is enabled by default (`KASSANDRA_WAKE_ENABLED=true`); set to `false` to use manual-only mode.
 
-**What changed:**
-- `src-tauri/src/main.rs`: `start_call` command (emits `connecting`, fails if already in call); `env_bool()` helper; wake loop gated behind `KASSANDRA_WAKE_ENABLED` (default false) — detector is skipped, `wakeword_active` stays false, and the loop's wake-detection section is short-circuited (mic is still drained to keep the cpal callback from blocking on the bounded mpsc channel). The `in_call` → `run_call` path is shared between manual and wake modes.
-- `src/index.html`: status text `Click Call to start`; new `#call-btn` in `#controls` (visible when idle, hidden once a call starts — replaces Mute/End Call which still hide until in-call).
-- `src/main.js`: `callBtn` ref + click → `invoke("start_call")`; `STATE_LABELS.idle` → `Click Call to start`; `setState` toggles `callBtn` inverse to Mute/End Call, and hides `#wake-hero` while in-call (the circle is an idle ambient element — it shouldn't show during a call). The backend only emits `wake_state: listening` in manual mode, so the hero stays breathing with no scores when visible.
-- Wake-hero hearing/fired/rejected JS + CSS: left dormant for future wake work.
-
-**To re-enable wake word:** set `KASSANDRA_WAKE_ENABLED=true` (and provide `models/kassandra.onnx`). The wake loop resumes; the Call button still works alongside it (it just sets `in_call`, the loop handles the rest).
+**What changed (this session):**
+- `KASSANDRA_WAKE_ENABLED` default changed from `false` to `true`.
+- The wake loop runs continuously, predicting on every 100ms mic chunk on a tokio worker thread.
+- `end_call` immediately emits `qwen_state: "disconnected"` so the UI flips back to the wake hero while the WebSocket tears down.
+- `run_call` (in `client.rs`) cleanup no longer blocks: sends `__CLOSE__` sentinel, aborts reader task, awaits writer for clean WebSocket close in milliseconds.
+- Client-side: `@types/node` added to devDependencies; `types: ["node"]` added to `tsconfig.node.json` (pre-existing issue — vite.config.ts needed `process` global).
 
 ## Lessons Learned (still useful — don't retry these)
 1. `transparent: true` in tauri.conf.json causes click-through on Linux/WebKitGTK — set `false`.
@@ -77,34 +103,20 @@ Replaced automatic wake-word triggering with a UI Call button that starts a Qwen
 ## What's NOT Done
 1. Remove debug `eprintln!` logging once audio + turn flow is solid (`client.rs`, `main.rs`, `mic.rs`, `speaker.rs`).
 2. Fix placeholder icons — `bundle.active = false` for dev, need real icons for production.
-3. Wake word: replace tract with real onnxruntime OR retrain for a wider scoring window — see [`docs/wake-word.md`](wake-word.md) "Next steps."
+3. Wake word: retrain the model (`medium` / 150k steps / 30k samples — see [`docs/wake-word.md`](wake-word.md) Path C) for a wider scoring window + higher peak. With native ONNX Runtime this is purely an accuracy refinement.
 4. 3D avatar / lip-sync — Phase 2.
 5. Memory / RAG, skills, personality — Phase 2.
 
 ## Key Files
-- `src-tauri/src/main.rs` — Tauri entry, commands (`start_call`, `end_call`, `toggle_mute`, `console_log`), `run_voice_agent` loop (wake detection gated behind `KASSANDRA_WAKE_ENABLED`, default false — see wake-word.md), `WakeConfig::from_env()`, `env_bool()`, `wake_state`/`wake_rms` emitters, optional `KASSANDRA_DUMP_PCM` writer.
-- `src-tauri/src/lib.rs` — `AppState` (muted / in_call / wakeword_active AtomicBools).
-- `src-tauri/src/audio/mic.rs` — cpal mic capture, 100ms chunks, `std::mem::forget`.
-- `src-tauri/src/audio/speaker.rs` — cpal output, 24kHz, VecDeque, `std::mem::forget`.
-- `src-tauri/src/audio/aec.rs` — WebRTC AEC3 echo cancellation (bundled C++). Hoisted to `run_voice_agent` startup. `clear_render()` for post-call cleanup. PipeWire `module-echo-cancel` alt documented in module docs.
-- `src-tauri/src/audio/mod.rs` — exports `Aec`, `MicStream`, `Speaker`.
-- `src-tauri/src/wakeword/detector.rs` — livekit-wakeword init (loads `models/kassandra.onnx`).
-- `src-tauri/examples/test_wakeword.rs` — wake-model diagnostic binary (slide/live/isolated modes).
-- `src-tauri/src/qwen/client.rs` — Qwen WebSocket proxy. `run_call` (mic + aec + wake_chunk; used by both wake-fired and manual `start_call`) and `run_call_manual` (dormant — manual call start reuses `run_call` instead; left for future use). Handles `user_transcript` / `qwen_transcript` / `qwen_response`. `run_call` calls `aec.clear_render()` after the call.
-- `src/main.js` — Frontend UI, Tauri event listeners (`wake_state`, `wake_rms`, `qwen_state`, `*_transcript`, `qwen_response`, `qwen_error`), wake-circle state machine.
-- `src/index.html`, `src/styles.css` — UI (status bar, `#wake-hero` + `#messages` inside `#chat`, Mute/End Call).
-- `src-tauri/tauri.conf.json` — `withGlobalTauri: true`, `transparent: false`, `decorations: true`, `resizable: true`, 520×800.
-- `src-tauri/capabilities/default.json` — `core:default`.
-- `wakeword-configs/kassandra.yaml` — wake-word training config.
-- `docker/Dockerfile.dev` — Rust stable, Bun, @tauri-apps/cli, cargo-watch, audio deps, AEC build deps.
-- `docker/asound.conf` — ALSA → PipeWire routing.
-- `docker/wakeword-trainer/Dockerfile` — livekit-wakeword Python trainer + espeak-ng.
-- `Makefile` — dev-build, dev-run (auto-runs `xhost +local:docker`), dev-shell, train-wakeword; waifu-node-modules volume isolation.
-- `AGENTS.md` — Frontend architecture rules + Docker isolation hard blocks.
-- `client/vite.config.ts` — Vite config + Docker CWD guard (hard-blocks host dev/build).
-- `client/scripts/preinstall.cjs` — Docker guard for npm/pnpm/yarn install (host block).
-- `client/src/main.tsx` — React mount, Tauri event adapter, CJK web font import.
-- `client/src/styles.css` — Global styles, font-family stack with bundled Noto Sans SC.
+- `src-tauri/src/main.rs` — Tauri entry, commands (`start_call`, `end_call` with immediate `disconnected` emit, `toggle_mute`, `console_log`), `run_voice_agent` loop (wake enabled by default — continuous rolling predict, threaded via `tokio::spawn`), `WakeConfig` (3 fields), `env_bool()`.
+- `src-tauri/lib/wakeword-native/` — Forked native-ONNX-Runtime wake word crate (94× faster than ort-tract). Identical API to livekit-wakeword, identical inference results.
+- `src-tauri/build.rs` — compiles `onnx_compat.c` (C23 glibc compat shim) via `cc` crate for static ONNX Runtime linking on Debian Bookworm.
+- `src-tauri/onnx_compat.c` — C23 glibc compat stubs (`__isoc23_strtol` etc.) required for `ort` with `download-binaries` on Bookworm.
+- `src-tauri/src/wakeword/detector.rs` — wake word init, uses `wakeword-native` crate (path dep).
+- `src-tauri/src/qwen/client.rs` — Qwen WebSocket proxy. `run_call` cleanup sends `__CLOSE__` sentinel, aborts reader task, awaits writer for fast teardown.
+- `client/src/stores/state/domain/wake.ts` — Wake state store (still includes `hearing`/`rejected` types — no longer emitted but valid).
+- `client/src/stores/workflows/callWorkflow.ts` — `applyWakeState`, `endCall`, `startCall` workflows.
+- `client/src/components/WakeHero.tsx` — Wake circle UI. Bars driven by continuous `wake_rms` (no more `hearing`/`listening` branch), score display on `fired` only.
 
 ## Environment Variables
 ```
@@ -116,12 +128,9 @@ QWEN_VOICE=Tina
 QWEN_INSTRUCTIONS=You are Kassandra, a personal AI assistant. Be warm, witty, and concise.
 HF_TOKEN=hf-xxx (for wakeword training)
 
-# Wake-loop configurability — documented in docs/wake-word.md (wake loop deferred, gated off by default):
-KASSANDRA_WAKE_ENABLED=false   # set true to re-enable the wake loop (needs models/kassandra.onnx)
-KASSANDRA_RMS_THRESHOLD=250
-KASSANDRA_PREDICT_CADENCE_MS=200
+# Wake-loop configurability — documented in docs/wake-word.md (wake loop enabled by default):
+KASSANDRA_WAKE_ENABLED=true    # set false for manual-only mode
 KASSANDRA_WAKE_THRESHOLD=0.45
-KASSANDRA_SILENCE_CONFIRM_CHUNKS=8
 KASSANDRA_POST_FIRE_LOCKOUT_MS=2000
 KASSANDRA_WAKE_BUFFER_SAMPLES=32000
 KASSANDRA_DUMP_PCM=/app/src-tauri/wake_dump.pcm   # optional PCM dump for offline test_wakeword analysis
@@ -130,10 +139,10 @@ KASSANDRA_DUMP_PCM=/app/src-tauri/wake_dump.pcm   # optional PCM dump for offlin
 ## How to Run
 ```bash
 make dev-run
-# App launches in manual call mode (wake loop gated off by KASSANDRA_WAKE_ENABLED=false).
-# Click "Call" to start a Qwen call; click "End Call" to stop.
-# Set KASSANDRA_WAKE_ENABLED=true to re-enable the wake loop (needs models/kassandra.onnx).
-# Watch terminal for qwen events once a call starts: "qwen: speech started", "qwen transcript: ...", "qwen: response complete (N audio chunks)"
+# App launches with wake-word detection enabled (KASSANDRA_WAKE_ENABLED=true).
+# Say "Kassandra" to start a call automatically, or click "Call" for manual start.
+# Click "End Call" to stop; the wake hero returns and detection resumes.
+# Set KASSANDRA_WAKE_ENABLED=false for manual-only mode.
 ```
 
 ## Docs

@@ -5,12 +5,9 @@ import { state } from "../stores/stores";
 
 // 24 bars around the circle perimeter. Each bar's height is driven by a
 // per-bar CSS variable --h (0..1) set imperatively from wake_rms.
-// - listening : idle. No wake_rms emitted; bars hold a static low baseline
-//   and the container `wake-breathe` keyframe animates them. Pure CSS.
-// - hearing   : RMS gate tripped; bars scale with wake_rms (denoised energy).
-// Hero visibility is driven by callState (hidden during a call), NOT wake
-// state — manual call mode never emits wake_state. The wake-state score
-// display stays for when KASSANDRA_WAKE_ENABLED=true.
+// wake_rms is emitted every 100ms unconditionally; bars react continuously
+// to ambient audio energy. Hero visibility is driven by callState (hidden
+// during a call).
 const N_BARS = 24;
 const BAR_OFFSETS = Array.from({ length: N_BARS }, (_, i) => 0.55 + 0.45 * Math.sin(i * 1.3));
 
@@ -27,43 +24,30 @@ export const WakeHero = observer(function WakeHero() {
   const [scoreText, setScoreText] = useState("");
   const barRefs = useRef<(HTMLDivElement | null)[]>([]);
 
-  // Drive bar --h from RMS. listening → static 0.18 baseline (CSS breathes);
-  // hearing → lastRms; processing/fired/rejected/error → leave --h alone so
-  // CSS keyframes (spin/burst/flat) take over without inline override.
+  // Drive bar --h from RMS continuously. wake_rms is emitted every 100ms
+  // unconditionally, so bars react to ambient audio energy at all times.
+  // fired/error → leave --h alone so CSS keyframes take over.
   useEffect(() => {
     const dispose = autorun(() => {
       const st = state.domain.wake.wakeState;
+      if (st !== "listening") return;
       const rms = state.domain.wake.lastRms;
-      let drive: number;
-      if (st === "hearing") {
-        drive = rms;
-      } else if (st === "listening") {
-        drive = 0.18;
-      } else {
-        return;
-      }
       for (let i = 0; i < N_BARS; i++) {
         const el = barRefs.current[i];
         if (!el) continue;
-        const h = Math.min(1, drive * BAR_OFFSETS[i] * 1.4 + 0.08);
+        const h = Math.min(1, rms * BAR_OFFSETS[i] * 1.4 + 0.08);
         el.style.setProperty("--h", h.toFixed(3));
       }
     });
     return dispose;
   }, []);
 
-  // Score text on wake fired/rejected (only fires when wake is enabled).
-  // 2.5s display window; cleared otherwise. Dormant in manual call mode.
+  // Score text on wake fired. 2.5s display window; cleared otherwise.
   useEffect(() => {
     let t: ReturnType<typeof setTimeout> | undefined;
     if (wakeState === "fired" && score !== null) {
       setScoreText(`score ${score.toFixed(2)} \u2713`);
       t = setTimeout(() => setScoreText(""), 2500);
-    } else if (wakeState === "rejected" && score !== null) {
-      setScoreText(`score ${score.toFixed(2)} \u2717`);
-      t = setTimeout(() => setScoreText(""), 2500);
-    } else if (wakeState === "error") {
-      setScoreText("");
     } else {
       setScoreText("");
     }

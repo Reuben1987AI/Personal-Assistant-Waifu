@@ -1,0 +1,20 @@
+FROM rust:1.86-slim-bookworm
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    libssl-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN rustup update stable && rustup default stable
+
+WORKDIR /app
+
+COPY bench/Cargo.toml bench/build.rs bench/onnx_compat.c bench/
+COPY bench/src/ bench/src/
+COPY src-tauri/lib/wakeword-native/ src-tauri/lib/wakeword-native/
+COPY src-tauri/models/kassandra.onnx src-tauri/models/kassandra.onnx
+COPY src-tauri/kas1.pcm src-tauri/kas1.pcm
+
+RUN cd bench && cargo build --release
+
+ENTRYPOINT ["./bench/target/release/wakeword-bench", "src-tauri/models/kassandra.onnx", "src-tauri/kas1.pcm"]

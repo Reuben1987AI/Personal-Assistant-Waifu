@@ -1,0 +1,25 @@
+[package]
+edition = "2021"
+name = "wakeword-native"
+version = "0.1.3"
+build = "build.rs"
+autolib = false
+autobins = false
+autoexamples = false
+autotests = false
+autobenches = false
+description = "Forked ONNX-based wake word detection — native onnxruntime backend"
+license = "Apache-2.0"
+
+[lib]
+name = "livekit_wakeword"
+path = "src/lib.rs"
+
+[dependencies]
+ndarray = "0.17.2"
+resampler = "0.4"
+thiserror = "2"
+ort = { version = "=2.0.0-rc.11", default-features = false, features = ["download-binaries", "ndarray", "std", "tls-rustls"] }
+
+[dev-dependencies]
+hound = "3.5"
