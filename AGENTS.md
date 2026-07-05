@@ -2,6 +2,8 @@
 
 Rules are ported from the Flutter/MobX naturaleza-mexicana app and adapted to a Tauri + Vite + React + TypeScript + MobX stack. This file is the single source of truth for the React frontend; Rust backend rules live in `src-tauri/` and are out of scope here.
 
+**This is a public repo. Never commit secrets, keys, tokens, or real `.env` files.**
+
 Don't document what exists - document where to find it and how to work with it.
 
 ## Docker — CRITICAL
