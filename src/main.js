@@ -9,6 +9,7 @@ function log(msg) {
 const statusIndicator = document.getElementById("status-indicator");
 const statusText = document.getElementById("status-text");
 const messages = document.getElementById("messages");
+const callBtn = document.getElementById("call-btn");
 const muteBtn = document.getElementById("mute-btn");
 const endBtn = document.getElementById("end-btn");
 
@@ -21,7 +22,7 @@ const wakeScore = document.getElementById("wake-score");
 let currentKassBubble = null;
 
 const STATE_LABELS = {
-  idle: 'Say "Kassandra" to start',
+  idle: 'Click Call to start',
   wake_detected: "Listening...",
   connecting: "Connecting...",
   connected: "Connected",
@@ -35,8 +36,10 @@ function setState(state) {
   statusText.textContent = STATE_LABELS[state] || state;
 
   const inCall = !["idle", "disconnected"].includes(state);
+  callBtn.classList.toggle("hidden", inCall);
   muteBtn.classList.toggle("hidden", !inCall);
   endBtn.classList.toggle("hidden", !inCall);
+  wakeHero.classList.toggle("hidden", inCall);
 }
 
 function appendMessage(text, kind) {
@@ -81,9 +84,16 @@ function finalizeKass(text) {
 
 /* ===== Wake activity circle =====
    24 bars around the circle perimeter. Each bar's height is driven by a
-   per-bar CSS variable --h (0..1) updated from the wake_rms event, with a
-   small deterministic offset per bar so they don't all move identically.
-   State transitions are driven by wake_state events. */
+   per-bar CSS variable --h (0..1):
+     - `listening` : idle. The Rust wake loop is in energy-gate-off mode and
+       emits no wake_rms; the bars are left to the CSS container-level
+       breathing animation so the circle never looks frozen.
+     - `hearing`   : the RMS gate tripped and the rolling-buffer wake-word
+       classifier is scoring. Bars react to wake_rms (denoised chunk energy,
+       0..1) so louder speech ⇒ taller bars.
+   A small deterministic offset per bar keeps them from moving identically.
+   State transitions are driven by wake_state events: listening / hearing /
+   processing / fired / rejected / error. */
 
 const N_BARS = 24;
 const barEls = [];
@@ -104,6 +114,34 @@ function clearScoreSoon() {
   scoreTimer = setTimeout(() => {
     wakeScore.textContent = "";
   }, 2500);
+}
+
+let lastRms = 0;
+
+function applyBarHeights() {
+  // Compute target bar heights based on current wake state.
+  const st = wakeHero.dataset.state;
+  let drive;
+  if (st === "hearing") {
+    // Utterance in progress: drive purely by denoised RMS energy. The Rust
+    // side already gated on energy, so any wake_rms here is real audio.
+    drive = lastRms;
+  } else if (st === "listening") {
+    // Idle: no wake_rms is emitted in this state, so hold a static low value
+    // as a baseline and let the CSS `wake-breathe` keyframe do the actual
+    // motion (`--h` only sets scale, breathing animates transform on the
+    // container). Keeps the circle alive without false-amplitude flutter.
+    drive = 0.18;
+  } else {
+    // processing / fired / rejected / error — let CSS take over (spin / burst
+    // / flat). Don't touch --h here so the CSS keyframes can collapse bars
+    // without being overridden.
+    return;
+  }
+  for (let i = 0; i < N_BARS; i++) {
+    const h = Math.min(1, drive * barOffsets[i] * 1.4 + 0.08);
+    barEls[i].style.setProperty("--h", h.toFixed(3));
+  }
 }
 
 function setWakeState(state, score, msg) {
@@ -153,13 +191,12 @@ listen("wake_state", (event) => {
 });
 
 listen("wake_rms", (event) => {
-  // Only react to RMS while in hearing state — processing/listening ignore.
-  if (wakeHero.dataset.state !== "hearing") return;
+  // RMS of the denoised mic chunk, 0..1, emitted every 100ms while the wake
+  // loop's RMS gate is active (the `hearing` state). Drives the perimeter bar
+  // heights; nothing is emitted while idle, so the listening state fades to
+  // CSS-driven breathing.
   lastRms = event.payload;
-  for (let i = 0; i < N_BARS; i++) {
-    const h = Math.min(1, lastRms * barOffsets[i] * 1.4 + 0.08);
-    barEls[i].style.setProperty("--h", h.toFixed(3));
-  }
+  applyBarHeights();
 });
 
 listen("qwen_state", (event) => {
@@ -181,6 +218,10 @@ listen("qwen_response", (event) => {
 listen("qwen_error", (event) => {
   statusText.textContent = "Error: " + event.payload;
   statusIndicator.className = "status disconnected";
+});
+
+callBtn.addEventListener("click", () => {
+  invoke("start_call").catch((e) => log("start_call error: " + e));
 });
 
 muteBtn.addEventListener("click", async () => {

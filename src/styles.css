@@ -124,9 +124,17 @@ body {
 
 /* ===== Wake activity hero =====
    Pinned at the top of #chat. A circular perimeter soundwave of 24 bars
-   whose heights react to the live mic RMS (wake_rms event) while the user
-   is speaking. State (listening/hearing/processing/fired/rejected/error)
-   drives colour and motion via the [data-state] attribute. */
+   whose heights are driven by JS via the per-bar CSS variable --h (set by
+   applyBarHeights() in main.js):
+     - listening : RMS gate off — no wake_rms is emitted, the bars hold a
+                   static low baseline and the container `wake-breathe`
+                   keyframe animates them. Pure CSS, no flutter from a VAD.
+     - hearing   : RMS gate tripped — bars scale with wake_rms (denoised
+                   chunk energy, 0..1). The wake-word ONNX is firing every
+                   `KASSANDRA_PREDICT_CADENCE_MS` against a rolling 2s buffer
+                   in Rust; we just visualise the energy here.
+   State (listening/hearing/processing/fired/rejected/error) drives colour
+   and motion via the [data-state] attribute selector. */
 
 #wake-hero {
   flex: 0 0 auto;

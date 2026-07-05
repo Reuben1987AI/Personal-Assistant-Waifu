@@ -9,6 +9,7 @@ dev-build:
 	docker build -t $(IMAGE_NAME) -f docker/Dockerfile.dev .
 
 dev-run:
+	@command -v xhost >/dev/null 2>&1 && xhost +local:docker || echo "xhost not found (GUI from container may fail — see lesson #11)"
 	docker run -it --rm \
 		-v /tmp/.X11-unix:/tmp/.X11-unix:ro \
 		-e DISPLAY=$$DISPLAY \

@@ -113,6 +113,14 @@ impl Aec {
         self.render_buffer.extend(resampled);
     }
 
+    /// Drop any queued render samples. Call at the end of a Qwen session so
+    /// the next wake-loop `process_capture` doesn't feed stale Kassandra audio
+    /// into AEC3 as a fake echo reference (which would distort the wake
+    /// stream after the call ends).
+    pub fn clear_render(&mut self) {
+        self.render_buffer.clear();
+    }
+
     pub fn process_capture(&mut self, mic: &[i16]) -> Vec<i16> {
         if mic.is_empty() {
             return Vec::new();

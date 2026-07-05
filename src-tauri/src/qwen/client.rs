@@ -8,7 +8,7 @@ use tokio::sync::Mutex;
 use tokio_tungstenite::{connect_async, tungstenite::Message};
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 
-use crate::audio::{MicStream, Speaker};
+use crate::audio::{Aec, MicStream, Speaker};
 use crate::AppState;
 
 const DEFAULT_MODEL: &str = "qwen3.5-omni-flash-realtime";
@@ -21,6 +21,7 @@ pub async fn run_call(
     app: &AppHandle,
     mic: &Arc<Mutex<MicStream>>,
     speaker: &Speaker,
+    aec: &Option<Arc<std::sync::Mutex<Aec>>>,
     wake_chunk: &[i16],
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let api_key =
@@ -79,17 +80,6 @@ pub async fn run_call(
         .await?;
 
     let _ = app.emit("qwen_state", "connected");
-
-    let aec = match crate::audio::Aec::new() {
-        Ok(a) => {
-            eprintln!("AEC enabled (WebRTC AEC3)");
-            Some(Arc::new(std::sync::Mutex::new(a)))
-        }
-        Err(e) => {
-            eprintln!("AEC unavailable, continuing without echo cancellation: {e}");
-            None
-        }
-    };
 
     let app_clone = app.clone();
     let speaker_clone = speaker.clone();
@@ -231,6 +221,12 @@ pub async fn run_call(
 
     let _ = write.close().await;
     let _ = reader.await;
+
+    // Drain stale render so the wake loop's post-call process_capture doesn't
+    // run AEC3 against a phantom echo reference.
+    if let Some(a) = aec {
+        a.lock().unwrap().clear_render();
+    }
 
     Ok(())
 }
