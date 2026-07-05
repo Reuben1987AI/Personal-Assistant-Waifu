@@ -107,9 +107,23 @@ fn main() {
         .invoke_handler(tauri::generate_handler![end_call, toggle_mute, start_call, console_log])
         .setup(move |app| {
             let state = app.state::<Arc<Mutex<AppState>>>();
+            // app_data_dir is captured resolve-time (sync); the teacher state
+            // load itself runs in the spawned async task (it locks AppState).
+            let data_dir = app.path().app_data_dir().ok();
             let app_handle = app.handle().clone();
             let state_clone = state.inner().clone();
             tauri::async_runtime::spawn(async move {
+                // Load curriculum.json + progress.json from the per-user app
+                // data dir. Seeds curriculum.json from the embedded default
+                // on first run. Errors only log — teacher mode just won't
+                // work, the rest of the app should still start.
+                if let Some(dir) = data_dir {
+                    if let Err(e) = state_clone.lock().await.teacher.init(dir) {
+                        eprintln!("teacher state init failed: {e}");
+                    }
+                } else {
+                    eprintln!("app_data_dir unavailable — teacher mode disabled");
+                }
                 if let Err(e) = run_voice_agent(state_clone, app_handle, speaker).await {
                     eprintln!("Voice agent error: {e}");
                 }

@@ -89,6 +89,58 @@ body {
   font-size: 14px;
   font-weight: 500;
   color: #d8d8e8;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* ===== Chinese teacher mode badge =====
+   Shown when `state.domain.teacher.active` is true. Renders the current
+   phase + target word + curriculum position, driven by the `teacher_state`
+   Tauri event. Read-only — no exit button (tools-driven exit only, per the
+   design decision to keep the voice-only flow). */
+
+#teacher-badge {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 10px;
+  background: #2a1a3a;
+  border: 1px solid #5a3a8a;
+  border-radius: 999px;
+  font-size: 12px;
+  color: #e0d0f0;
+  max-width: 70%;
+}
+
+#teacher-badge-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #c060f0;
+  box-shadow: 0 0 8px rgba(192, 96, 240, 0.6);
+  flex: 0 0 auto;
+}
+
+#teacher-badge-target {
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+#teacher-badge-phase {
+  font-size: 11px;
+  color: #a888c0;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  flex: 0 0 auto;
+}
+
+#teacher-badge-progress {
+  font-size: 11px;
+  color: #807090;
+  flex: 0 0 auto;
 }
 
 #chat {

@@ -4,6 +4,7 @@ import ReactDOM from "react-dom/client";
 import { App } from "./App";
 import { state, workflows } from "./stores/stores";
 import type { WakeStatePayload } from "./stores/state/domain/wake";
+import type { TeacherSnapshotPayload } from "./stores/state/domain/teacher";
 import "./styles.css";
 
 // The single place `listen()` is called. Components/workflows never register
@@ -44,6 +45,17 @@ void listen("qwen_response", (e) =>
 
 void listen("qwen_error", (e) =>
   void route("qwen_error", () => workflows.call.setQwenError(e.payload as string)));
+
+// Teacher mode events. `app_mode` carries the bare active flag (boolean);
+// `teacher_state` carries the full Rust-side snapshot (mode + phase + target
+// + learned set + curriculum position/total). Both are validated at the
+// adapter boundary — a malformed snapshot throws and surfaces via
+// state.view.error, never silently accepted into a store.
+void listen("app_mode", (e) =>
+  void route("app_mode", () => workflows.teacher.setModeActive(e.payload as boolean)));
+
+void listen("teacher_state", (e) =>
+  void route("teacher_state", () => workflows.teacher.applySnapshot(e.payload as TeacherSnapshotPayload)));
 
 void workflows.call.logToRust("frontend: listeners registered");
 

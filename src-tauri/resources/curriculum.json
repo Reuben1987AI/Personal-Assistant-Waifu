@@ -1,0 +1,18 @@
+[
+  { "hanzi": "你好",   "pinyin": "nǐ hǎo",     "en": "hello",            "category": "greeting"   },
+  { "hanzi": "再见",   "pinyin": "zài jiàn",   "en": "goodbye",          "category": "greeting"   },
+  { "hanzi": "谢谢",   "pinyin": "xiè xie",    "en": "thank you",        "category": "politeness" },
+  { "hanzi": "不客气", "pinyin": "bú kè qi",   "en": "you're welcome",   "category": "politeness" },
+  { "hanzi": "对不起", "pinyin": "duì bu qǐ",  "en": "sorry",            "category": "politeness" },
+  { "hanzi": "没关系", "pinyin": "méi guān xi","en": "it doesn't matter","category": "politeness" },
+  { "hanzi": "是",     "pinyin": "shì",        "en": "yes / to be",      "category": "verb"       },
+  { "hanzi": "不是",   "pinyin": "bú shì",     "en": "no / not be",      "category": "verb"       },
+  { "hanzi": "我",     "pinyin": "wǒ",         "en": "I / me",           "category": "pronoun"    },
+  { "hanzi": "你",     "pinyin": "nǐ",         "en": "you",              "category": "pronoun"    },
+  { "hanzi": "他",     "pinyin": "tā",         "en": "he / him",         "category": "pronoun"    },
+  { "hanzi": "她",     "pinyin": "tā",         "en": "she / her",        "category": "pronoun"    },
+  { "hanzi": "我们",   "pinyin": "wǒ men",     "en": "we / us",          "category": "pronoun"    },
+  { "hanzi": "什么",   "pinyin": "shén me",    "en": "what",             "category": "question"   },
+  { "hanzi": "谁",     "pinyin": "shuí",       "en": "who",              "category": "question"   },
+  { "hanzi": "哪里",   "pinyin": "nǎ lǐ",      "en": "where",            "category": "question"   }
+]
