@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="waifu-img.png" alt="Waifu" width="400" />
+  <img src="waifu-img-2.webp" alt="Waifu" width="400" />
 </p>
 
 # Your Waifu. On your desktop. Actually useful.
