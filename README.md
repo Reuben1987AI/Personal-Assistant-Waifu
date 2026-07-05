@@ -1,85 +1,65 @@
-# Personal-Assistant-Waifu
-Your very own Personal Assistant Waifu
+<p align="center">
+  <img src="waifu-img.png" alt="Waifu" width="400" />
+</p>
 
-## Design Desicions
+# Your Waifu. On your desktop. Actually useful.
 
-- Bring your own keys (LLM, TTS, STT), this shit is private.
-- [ ] Separate the skills into its own repository? (Check ProjectAliceSkills)
+A 3D-rendered desktop AI assistant that **sees you, talks to you, and gets shit done** — voice-first, real-time, zero latency feel.
 
-## Roadmap
+She moves. She dances. She lip-syncs every word. Powered by realtime speech-to-speech models like **Qwen Omni** (and soon **Grok**), she's the agent that codes, browses, and controls your machine — all through voice, all through her.
 
-- [ ] Multiplaform AI text chat with one model
-- [ ] TTS and STT, call mode and voice message mode
-- [ ] 2D Avatar Waifu with lipsync
-- [ ] Memory: RAG
-- [ ] Memory: Context editor
-- [ ] Memory: Dynamic caching of full topics
-- [ ] Personality: Select/Edit/Create your personality
+---
 
-- [ ] Game Mode: Play games with your Waifu
-  - [ ] Games repo vs using skills repo
-  - [ ] Dead by AI game
+## What she can (eventually) do
 
-- [ ] Control browser
-  - [ ] Chrome extension vs
-  - [ ] Testing framework API
+- **Real-time voice convos** — speech-to-speech, no janky STT→LLM→TTS pipeline
+- **Code** — writes, runs, debugs. Voice-controlled coding agent
+- **Browse the web** — opens pages, fills forms, scrapes data
+- **Control your PC** — files, apps, scripts, automation
+- **3D avatar** — renders in the app window with full lip-sync and idle animations
 
-- [ ] Control PC
+## Skills (the fun stuff)
 
-## Individual Random Specific Features
+| Skill | Status |
+|---|---|
+| **Teacher Mode** — quizzes you, explains concepts, adapts to your pace | In dev |
+| **Second Brain** — remembers everything, resurfaces context, builds your knowledge graph | Planned |
+| **Language Learning Partner** — realtime conversation practice with corrections | Planned |
+| **Secretary Mode** — calendar, email, reminders, scheduling | Planned |
+| **Game Mode** — plays games with you. Trivia, word games, full AI-hosted RPGs | Planned |
 
-- [ ] Remind me of my appointments
-- [ ] Manage my list of priorities 
-- [ ] Automate scripts in my computer
-- [ ] Answer my business whatsapp
-- [ ] Control Claude Code by Voice
-- [ ] Skill: Send CVs on Linkedin/custom
-- [ ] Skill: Auto follow / like socials github/instagram/tiktok
+---
 
-## References
+## Stack
 
-### Personal assistants
+- **Frontend**: Tauri + Vite + React + TypeScript + MobX + Three.js
+- **Backend**: Rust — mic capture, wake word, WebSocket proxy, speaker playback
+- **Speech-to-speech**: Qwen Omni Realtime API (Grok coming)
+- **Wake word**: livekit-wakeword (trained custom "Kassandra" model)
+- **Dev env**: Fully Dockerized (Rust, Bun, Tauri CLI — zero host pollution)
 
-https://github.com/Jackywine/Bella
+---
 
-https://github.com/project-alice-assistant/ProjectAlice
-https://github.com/project-alice-assistant/ProjectAliceSkills
+## What works today :white_check_mark:
 
-https://github.com/leon-ai/leon
-https://github.com/leon-ai/leon/tree/develop/skills
+- Wake word detection ("Kassandra") via custom ONNX model
+- Full Qwen Omni realtime integration — mic → cloud → speaker, end to end
+- Semantic VAD, barge-in support
+- Mute toggle, end call
+- Dockerized dev environment with X11 GUI + PipeWire audio passthrough
+- Tauri desktop shell with React/MobX UI
+- Error boundary, routing scaffold, form validation scaffold
 
-https://github.com/DragonComputer/Dragonfire
+## What's next :construction:
 
-### Tools to give it Skills
-
-(Convert office docs to Markdown)
-https://github.com/microsoft/markitdown
-
-### LLMS
-
-(Check this, apparently is the shit)
-https://github.com/MoonshotAI/Kimi-K2
-
-### Games that use AI
-
-https://deathbyai.gg/
-
-### Games SAAS
-
-(Games architecture)
-https://joinplayroom.com/
-(Strategic games partnership)
-https://www.littleumbrella.gg/
-
-## TODO
-
-- [ ] Check Mistral AI STT https://mistral.ai/news/voxtral starts at $0.001 per minute
-- [ ] Check Inworld TTS https://inworld.ai/tts $5/million characters
-
-## TO READ
-
-- [ ] https://inworld.ai/case-study/how-inworld-helped-the-ai-game-death-by-ai-with-20-million-players-reach-profitability
-- [ ] https://inworld.ai/blog/improved-character-brain
-- [ ] https://inworld.ai/blog/introducing-dynamic-relationships
-- [ ] https://inworld.ai/blog/introducing-long-term-memory
-
+- 3D waifu avatar rendering + lip-sync (Three.js / VRM)
+- Grok realtime API integration
+- Memory / RAG / context persistence
+- Browser control agent
+- PC control agent (file ops, scripting)
+- Teacher Mode
+- Personality system
+- Game Mode
+- Voice coding agent
+- Skill plugin system
+- Android support
