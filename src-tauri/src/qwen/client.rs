@@ -62,6 +62,9 @@ pub async fn run_call(
             "voice": voice,
             "input_audio_format": "pcm_16000hz_mono_16bit",
             "output_audio_format": "pcm_24000hz_mono_16bit",
+            "input_audio_transcription": {
+                "model": "paraformer-realtime-v2"
+            },
             "instructions": instructions,
             "turn_detection": {
                 "type": "semantic_vad",
@@ -77,8 +80,20 @@ pub async fn run_call(
 
     let _ = app.emit("qwen_state", "connected");
 
+    let aec = match crate::audio::Aec::new() {
+        Ok(a) => {
+            eprintln!("AEC enabled (WebRTC AEC3)");
+            Some(Arc::new(std::sync::Mutex::new(a)))
+        }
+        Err(e) => {
+            eprintln!("AEC unavailable, continuing without echo cancellation: {e}");
+            None
+        }
+    };
+
     let app_clone = app.clone();
     let speaker_clone = speaker.clone();
+    let aec_clone = aec.clone();
     let reader = tokio::spawn(async move {
         let mut audio_chunks = 0u32;
         while let Some(msg) = read.next().await {
@@ -96,6 +111,9 @@ pub async fn run_call(
                                             .map(|c| i16::from_le_bytes([c[0], c[1]]))
                                             .collect();
                                         speaker_clone.push_chunk(&samples).await;
+                                        if let Some(aec) = &aec_clone {
+                                            aec.lock().unwrap().push_render(&samples);
+                                        }
                                     }
                                 }
                             }
@@ -108,6 +126,12 @@ pub async fn run_call(
                                 if let Some(transcript) = event["transcript"].as_str() {
                                     eprintln!("qwen transcript: {transcript}");
                                     let _ = app_clone.emit("qwen_response", transcript);
+                                }
+                            }
+                            "conversation.item.input_audio_transcription.completed" => {
+                                if let Some(transcript) = event["transcript"].as_str() {
+                                    eprintln!("user transcript: {transcript}");
+                                    let _ = app_clone.emit("user_transcript", transcript);
                                 }
                             }
                             "input_audio_buffer.speech_started" => {
@@ -174,8 +198,13 @@ pub async fn run_call(
                 continue;
             }
 
+            let to_send: Vec<i16> = match &aec {
+                Some(a) => a.lock().unwrap().process_capture(&chunk),
+                None => chunk,
+            };
+
             let encoded = BASE64.encode(
-                chunk
+                to_send
                     .iter()
                     .flat_map(|s| s.to_le_bytes())
                     .collect::<Vec<u8>>(),
@@ -248,8 +277,11 @@ pub async fn run_call_manual(
         "session": {
             "modalities": ["text", "audio"],
             "voice": voice,
-            "input_audio_format": "pcm_16000hz_mono_16bit",
+"input_audio_format": "pcm_16000hz_mono_16bit",
             "output_audio_format": "pcm_24000hz_mono_16bit",
+            "input_audio_transcription": {
+                "model": "paraformer-realtime-v2"
+            },
             "instructions": instructions,
             "turn_detection": {
                 "type": "semantic_vad",
@@ -270,6 +302,10 @@ pub async fn run_call_manual(
             "instructions": "Greet the user briefly. Say hello and ask how you can help."
         }
     });
+
+    write
+        .send(Message::Text(response_create.to_string().into()))
+        .await?;
 
     write
         .send(Message::Text(response_create.to_string().into()))
@@ -306,6 +342,11 @@ pub async fn run_call_manual(
                             "response.audio_transcript.done" => {
                                 if let Some(transcript) = event["transcript"].as_str() {
                                     let _ = app_clone.emit("qwen_response", transcript);
+                                }
+                            }
+                            "conversation.item.input_audio_transcription.completed" => {
+                                if let Some(transcript) = event["transcript"].as_str() {
+                                    let _ = app_clone.emit("user_transcript", transcript);
                                 }
                             }
                             "input_audio_buffer.speech_started" => {

@@ -29,3 +29,7 @@ build/
 
 # Logs
 *.log
+
+# Personal voice samples (regression fixtures used locally, not for git)
+*.flac
+src-tauri/kas1.pcm

@@ -5,12 +5,17 @@ Read this before touching anything in `src-tauri/src/audio/`, `docker/asound.con
 ## Architecture (what works)
 
 ```
-Mic (DMIC hw:0,6) → cpal capture → 100ms chunks → Qwen WebSocket
-                                                      ↓
+Mic (DMIC hw:0,6) → cpal capture → 100ms chunks → [AEC3 capture] → Qwen WebSocket
+                                                       ↑
+                           speaker output → [AEC3 render reference (24kHz→16kHz resampled)]
+                                                       ↓
 Speaker (PipeWire) ← cpal output ← PCM queue ← base64 decode ← Qwen WebSocket
 ```
 
 **All audio I/O is in Rust via cpal.** The frontend does NOT play audio. WebKitGTK's Web Audio API is broken in this Docker setup (see below). Audio response chunks are decoded from base64 in `client.rs`, pushed to a `Speaker` queue, and played by a cpal output stream that reads from the queue in its callback.
+
+### Echo cancellation (AEC3)
+WebRTC AEC3 runs in-app (`src-tauri/src/audio/aec.rs`) via the `webrtc-audio-processing` crate (bundled C++ build). The speaker output is tapped as a reference ("render") signal, resampled 24kHz→16kHz, and fed into the AEC. The mic capture ("capture") signal is processed against the reference to remove echo. This enables full-duplex audio — the user can barge in and interrupt Kassandra mid-sentence. Also includes noise suppression + high-pass filter. See `aec.rs` module docs for the Path 2 alternative (PipeWire `module-echo-cancel`) if deploying on a controlled host.
 
 ### Audio routing
 
@@ -23,8 +28,9 @@ Container ALSA `default` → host PipeWire socket (`/tmp/pipewire-0`). This is t
 ### Data flow
 
 1. **Mic** (`audio/mic.rs`): cpal captures 16kHz mono i16 from ALSA `default`. Callback accumulates samples, emits 1600-sample (100ms) chunks via `mpsc::channel`. Stream kept alive with `std::mem::forget(stream)` (cpal::Stream is not Send).
-2. **Qwen** (`qwen/client.rs`): mic chunks → base64 → `input_audio_buffer.append`. Server VAD detects speech, responds with `response.audio.delta` events containing base64 PCM in the **`delta`** field (not `audio`).
-3. **Speaker** (`audio/speaker.rs`): `response.audio.delta` → base64 decode → i16 samples → `Speaker::push_chunk()`. cpal output stream (24kHz mono) reads from queue in callback, plays to ALSA `default` → PipeWire → speakers.
+2. **AEC** (`audio/aec.rs`): mic chunks → `Aec::process_capture()` → WebRTC AEC3 removes echo using speaker output as reference → cleaned 16kHz mono i16. Speaker chunks are fed via `Aec::push_render()` and resampled 24kHz→16kHz internally. 10ms (160-sample) frames processed per AEC call.
+3. **Qwen** (`qwen/client.rs`): cleaned mic chunks → base64 → `input_audio_buffer.append`. Server VAD detects speech, responds with `response.audio.delta` events containing base64 PCM in the **`delta`** field (not `audio`). Speaker output is also fed to AEC render reference.
+4. **Speaker** (`audio/speaker.rs`): `response.audio.delta` → base64 decode → i16 samples → `Speaker::push_chunk()` (also feeds AEC render). cpal output stream (24kHz mono) reads from queue in callback, plays to ALSA `default` → PipeWire → speakers.
 
 ### Key parameters
 

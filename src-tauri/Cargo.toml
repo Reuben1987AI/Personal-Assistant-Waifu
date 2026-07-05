@@ -16,6 +16,7 @@ livekit-wakeword = "0.1"
 ort = { version = "2.0.0-rc.11", features = ["download-binaries"] }
 dotenvy = "0.15"
 thiserror = "2"
+webrtc-audio-processing = { version = "~2.0", features = ["bundled"] }
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }

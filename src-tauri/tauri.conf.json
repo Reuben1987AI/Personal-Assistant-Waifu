@@ -13,12 +13,12 @@
     "windows": [
       {
         "title": "Kassandra",
-        "width": 400,
-        "height": 600,
+        "width": 520,
+        "height": 800,
         "transparent": false,
-        "decorations": false,
+        "decorations": true,
         "alwaysOnTop": false,
-        "resizable": false
+        "resizable": true
       }
     ],
     "security": {

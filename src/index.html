@@ -8,14 +8,24 @@
 </head>
 <body>
   <div id="app">
-    <div id="status-indicator" class="status idle"></div>
-    <div id="status-text">Say "Kassandra" to start</div>
-    <div id="transcript"></div>
-    <div id="controls">
-      <button id="trigger-btn">Trigger Wake</button>
+    <header id="status-bar">
+      <div id="status-indicator" class="status idle"></div>
+      <div id="status-text">Say "Kassandra" to start</div>
+    </header>
+    <main id="chat">
+      <div id="wake-hero" data-state="listening">
+        <div id="wake-circle">
+          <div id="wake-bars"></div>
+        </div>
+        <div id="wake-label"></div>
+        <div id="wake-score"></div>
+      </div>
+      <div id="messages"></div>
+    </main>
+    <footer id="controls">
       <button id="mute-btn" class="hidden">Mute</button>
       <button id="end-btn" class="hidden">End Call</button>
-    </div>
+    </footer>
   </div>
   <script src="main.js"></script>
 </body>

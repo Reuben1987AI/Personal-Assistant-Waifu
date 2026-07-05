@@ -27,7 +27,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     gstreamer1.0-plugins-base \
     gstreamer1.0-plugins-good \
     pipewire-alsa \
+    pkg-config \
+    ninja-build \
+    python3-pip \
+    libclang-dev \
     && rm -rf /var/lib/apt/lists/*
+
+# Install meson >= 1.1 via pip (Debian bookworm's apt meson 1.0.1 breaks
+# webrtc-audio-processing-sys's --reconfigure on a fresh build dir)
+RUN pip3 install meson --break-system-packages
 
 # Update Rust to latest stable (edition2024 support required by some deps)
 RUN rustup update stable && rustup default stable
