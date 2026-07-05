@@ -3,10 +3,18 @@
   "version": "0.1.0",
   "identifier": "com.personal-assistant.kassandra",
   "build": {
-    "frontendDist": "../src",
-    "devUrl": null,
-    "beforeDevCommand": "",
-    "beforeBuildCommand": ""
+    "frontendDist": "../client/dist",
+    "devUrl": "http://localhost:5173",
+    "beforeDevCommand": {
+      "cwd": "../client",
+      "script": "[ -d node_modules ] || bun install; bun run dev",
+      "wait": false
+    },
+    "beforeBuildCommand": {
+      "cwd": "../client",
+      "script": "[ -d node_modules ] || bun install; bun run build",
+      "wait": true
+    }
   },
   "app": {
     "withGlobalTauri": true,

@@ -75,7 +75,7 @@ The Rust backend (`src-tauri/`) talks to the frontend through Tauri events and c
   - `wake_rms` (0..1), `wake_vad` (0..1): written to `state.domain.wake.lastRms`/`lastVad`.
   - `qwen_state`: string `idle | wake_detected | connecting | connected | listening | speaking | disconnected`.
   - `user_transcript`, `qwen_transcript` (streaming delta), `qwen_response` (final), `qwen_error`.
-- **Commands (frontend → Rust, via `invoke()`)** — only workflows call these: `toggle_mute` (returns bool), `end_call`, `console_log` (error logging).
+- **Commands (frontend → Rust, via `invoke()`)** — only workflows call these: `start_call` (manual call start; wake word is deferred behind `KASSANDRA_WAKE_ENABLED`, default false), `toggle_mute` (returns bool), `end_call`, `console_log` (error logging).
 - **Fail fast at the adapter boundary**: if a `wake_state`/`qwen_state` payload doesn't match the expected shape or enum, throw. Workflows should never see a malformed event.
 - The event adapter in `main.tsx` is the one place `listen()` is called. Components/workflows never register listeners directly.
 

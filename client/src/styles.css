@@ -122,19 +122,7 @@ body {
   background: transparent;
 }
 
-/* ===== Wake activity hero =====
-   Pinned at the top of #chat. A circular perimeter soundwave of 24 bars
-   whose heights are driven by JS via the per-bar CSS variable --h (set by
-   applyBarHeights() in main.js):
-     - listening : RMS gate off — no wake_rms is emitted, the bars hold a
-                   static low baseline and the container `wake-breathe`
-                   keyframe animates them. Pure CSS, no flutter from a VAD.
-     - hearing   : RMS gate tripped — bars scale with wake_rms (denoised
-                   chunk energy, 0..1). The wake-word ONNX is firing every
-                   `KASSANDRA_PREDICT_CADENCE_MS` against a rolling 2s buffer
-                   in Rust; we just visualise the energy here.
-   State (listening/hearing/processing/fired/rejected/error) drives colour
-   and motion via the [data-state] attribute selector. */
+/* ===== Wake activity hero ===== */
 
 #wake-hero {
   flex: 0 0 auto;
@@ -180,7 +168,6 @@ body {
   background: currentColor;
   border-radius: 2px;
   transform-origin: center;
-  /* --rot: per-bar rotation, --h: 0..1 height multiplier */
   transform: translate(-50%, -50%) rotate(var(--rot)) translateY(-52px) scaleY(var(--h, 0.15));
   transition: transform 0.09s linear, opacity 0.25s;
   opacity: 0.9;
@@ -247,9 +234,6 @@ body {
   transition: opacity 0.2s;
 }
 
-/* Score visibility is driven purely by the wake state — attribute selector
-   out-ranks the base `#wake-score` opacity rule, so no JS class toggling
-   is needed. */
 #wake-hero[data-state="fired"] #wake-score,
 #wake-hero[data-state="rejected"] #wake-score {
   opacity: 1;
@@ -336,4 +320,65 @@ body {
 
 .hidden {
   display: none;
+}
+
+/* ===== Error screen (Error Boundary + inline error view) ===== */
+
+#error-screen {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  padding: 32px;
+  text-align: center;
+  background: #1a1a2e;
+}
+
+#error-screen h1 {
+  font-size: 20px;
+  color: #f06060;
+}
+
+#error-screen pre {
+  font-size: 13px;
+  color: #d8d8e8;
+  white-space: pre-wrap;
+  max-width: 90%;
+}
+
+#error-screen button {
+  background: #2a2a44;
+  border: 1px solid #3a3a55;
+  color: #e0e0e0;
+  padding: 10px 20px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+#error-screen button:hover {
+  background: #3a3a55;
+}
+
+/* ===== AppTextField (form scaffold, unused today) ===== */
+
+.app-text-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.app-text-field input {
+  background: #2a2a44;
+  border: 1px solid #3a3a55;
+  color: #e0e0e0;
+  padding: 10px 12px;
+  border-radius: 8px;
+  font-size: 14px;
+}
+
+.app-text-field-error {
+  font-size: 12px;
+  color: #f06060;
 }
